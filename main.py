@@ -5,28 +5,26 @@ import string
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 import json
+import sqlite3
 
 ps = PorterStemmer()
-df = pd.read_excel("queries.xlsx")
-df.drop(['Unnamed: 3'], axis=1, inplace = True)
-df.head()
-
-tags = list(df['Tags'])
-answers = list(df['Answer'])
-
-
-for i in range(len(tags)):
-    tags[i] = tags[i].split(",")
-    for j in range(len(tags[i])):
-        tags[i][j] = tags[i][j].rstrip().lstrip()
-        tag, val = tags[i][j].split()
-        val = float(val)
-        if tag.startswith('('):
-            tag = tag[1:-1]
-            tag = tag.split("/")
-            for k in range(len(tag)):
-                tag[k] = tag[k].rstrip().lstrip()
-        tags[i][j] = (tag, val)
+def process_table(name):
+	df = pd.read_excel(name)
+	tags = list(df['Tags'])
+	answers = list(df['Answer'])
+	for i in range(len(tags)):
+	    tags[i] = tags[i].split(",")
+	    for j in range(len(tags[i])):
+	        tags[i][j] = tags[i][j].rstrip().lstrip()
+	        tag, val = tags[i][j].split()
+	        val = float(val)
+	        if tag.startswith('('):
+	            tag = tag[1:-1]
+	            tag = tag.split("/")
+	            for k in range(len(tag)):
+	                tag[k] = tag[k].rstrip().lstrip()
+	        tags[i][j] = (tag, val)
+	return (tags, answers)
 
 def getscore(text, processed_text):
     intersection_sum = 0.0
@@ -45,34 +43,48 @@ def getscore(text, processed_text):
                 intersection_sum += parti_score
     return (intersection/(len(text) + len(processed_text) - intersection))
 
-def get_answer(query):
-    score = []
-    useless_words = {"college", "rnsit"}
-    question_tags = {"what", "who", "how", "where", "when", "why", "can"}
-    stpwords = set(stopwords.words("english"))
-    query = query.translate(str.maketrans("", "", string.punctuation))
-    query = query.lower()
-    partitioned_text = set(query.split())
-    partitioned_text = partitioned_text.difference(stpwords)
-    partitioned_text = partitioned_text.difference(question_tags)
-    partitioned_text = list(partitioned_text)
-    for i in range(len(partitioned_text)):
-        partitioned_text[i] = ps.stem(partitioned_text[i])
-    for i in tags:
-        score.append(getscore(partitioned_text, i))
-    if max(score) > 0.2:
-        ans_index = np.argmax(score)
-    else:
-        return("Cannot find answer to this question.")
-    return answers[ans_index]
 
-    
+def get_answer(query):
+	tags, answers = process_table("queries.xlsx")
+	score = []
+	useless_words = {"college", "rnsit"}
+	question_tags = {"what", "who", "how", "where", "when", "why", "can"}
+	stpwords = set(stopwords.words("english"))
+	query = query.translate(str.maketrans("", "", string.punctuation))
+	query = query.lower()
+	partitioned_text = set(query.split())
+	partitioned_text = partitioned_text.difference(stpwords)
+	partitioned_text = partitioned_text.difference(question_tags)
+	partitioned_text = partitioned_text.difference(useless_words)
+	partitioned_text = list(partitioned_text)
+	for i in range(len(partitioned_text)):
+	    partitioned_text[i] = ps.stem(partitioned_text[i])
+	for i in tags:
+	    score.append(getscore(partitioned_text, i))
+	if max(score) > 0.2:
+	    ans_index = np.argmax(score)
+	else:
+		tags, answers = process_table("queries2.xlsx")
+		score = []
+		for i in tags:
+		    score.append(getscore(partitioned_text, i))
+		if max(score) > 0.2:
+		    ans_index = np.argmax(score)
+		else:
+			return("Cannot find answer to this question.")
+	return answers[ans_index]
+
+
 app = Flask(__name__, static_url_path='/static')
 
 @app.route("/querymessage", methods=['POST'])
 def querymessage():
 	data = request.form['text']
 	ans = get_answer(data)
+	conn = sqlite3.connect('feedback.db')
+	conn.execute("INSERT INTO FEEDBACK (QUESTION, ANSWER) VALUES ('{0}', '{1}')".format(data, ans))
+	conn.commit()
+	conn.close()
 	return ans
 
 
